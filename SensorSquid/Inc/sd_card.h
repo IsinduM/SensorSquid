@@ -22,7 +22,9 @@
 // Files that can be accessed
 // Enum of open files
 typedef enum{
-	LogFile,
+	Temperature_File,
+	Wheel_Speed_File,
+	IMU_CAN_FILE,
 
 }FileEnum;
 
@@ -37,13 +39,18 @@ typedef enum{
 
 
 //Externalizations
-extern QueueHandle_t xSD_Card_Queue;			// Handle for the static queue
+extern QueueHandle_t xSD_Card_Queue_Temperature;			// Handle for the static queue
+extern QueueHandle_t xSD_Card_Queue_Wheel_Speed;			// Handle for the static queue
+extern QueueHandle_t xSD_Card_Queue_IMU_CAM;			// Handle for the static queue
+
+
+
 
 //External Functions
 void Init_SD_Card(void);
 void Init_SD_RTOS_Tasks(void);
-_Bool SD_Log(char * msg, int32_t bytesToWrite);
-_Bool SD_Log_From_ISR(char * msg, int32_t bytesToWrite);
+_Bool SD_Log(char * msg, int32_t bytesToWrite,FileEnum FileToWriteTo );
+_Bool SD_Log_From_ISR(char * msg, int32_t bytesToWrite, FileEnum FileToWriteTo);
 _Bool SD_Read(char readBuff[], int32_t bytesToRead, FileEnum file);
 
 

@@ -71,7 +71,7 @@ void imuPostStateTask(){
 						timedelt, state.pitch, state.roll, state.x_acceleration, state.y_acceleration, state.z_acceleration,
 						state.x_angular_rate, state.y_angular_rate, state.z_angular_rate);
 
-		SD_Log(msg, -1);
+		SD_Log(msg, -1,IMU_CAN_FILE);
 		vTaskDelay(pdMS_TO_TICKS(100));
 	}
 }

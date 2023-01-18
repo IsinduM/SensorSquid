@@ -193,8 +193,8 @@ void xWheelSpeed_Logger(void* pvParameters){
 		sprintf(logged_msgFR, "Delta: %f, WSPD(FR): %f", timedelt, wheelsped_bufferFR);
 
 		// Log both wheels
-		SD_Log(logged_msgFL, -1);
-		SD_Log(logged_msgFR, -1);
+		SD_Log(logged_msgFL, -1,Wheel_Speed_File);
+		SD_Log(logged_msgFR, -1,Wheel_Speed_File);
 
 		vTaskDelay(pdMS_TO_TICKS(5));	// Log the wheel speeds every 5ms
 	}

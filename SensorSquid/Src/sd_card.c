@@ -57,12 +57,16 @@ typedef struct{
 #define SD_LOG_MSG_SPACING				4							// size of the newLine string
 #define SD_SYNC_ERROR_CHECK_TIMEOUT		100							// How long to wait to check with error with gatekeeper / min period of sync requests
 
-#define SD_LOGFILE_STRING				"LOG_FILE.txt"		// String of the log file to format
+#define SD_LOGFILE_STRING0				"LOG_FILE0.csv"		// String of the log file to format
+#define SD_LOGFILE_STRING1				"LOG_FILE1.csv"		// String of the log file to format
+#define SD_LOGFILE_STRING2				"LOG_FILE2.csv"		// String of the log file to format
 
 
 // Compiler optimizations should make these not just sit in RAM
 static const char LOG_DIR_NAME[] = "LOGS";				// directory to store the error log
-static char LOG_FILE_NAME[] = SD_LOGFILE_STRING;			// Name for the error log file
+static char LOG_FILE_NAME0[] = SD_LOGFILE_STRING0;			// Name for the error log file
+static char LOG_FILE_NAME1[] = SD_LOGFILE_STRING1;			// Name for the error log file
+static char LOG_FILE_NAME2[] = SD_LOGFILE_STRING2;			// Name for the error log file
 static const char newLine[] = "\n";	// Space out messages written
 
 
@@ -86,8 +90,14 @@ static StaticTask_t xSD_Test_Task_Buffer;
 static TaskHandle_t	xSD_Card_Test_Handle;	//Task handle for the SD card task
 
 //SD Card RTOS Task Data
-static StaticQueue_t xSD_Card_Queue_Static;						// Queue for things to write to the SD card.
-QueueHandle_t xSD_Card_Queue;									// Handle for the static queue
+static StaticQueue_t xSD_Card_Queue_Static0;						// Queue for things to write to the SD card.
+static StaticQueue_t xSD_Card_Queue_Static1;
+static StaticQueue_t xSD_Card_Queue_Static2;
+
+QueueHandle_t xSD_Card_Queue_Temperature;									// Handle for the static queue
+QueueHandle_t xSD_Card_Queue_Wheel_Speed;
+QueueHandle_t xSD_Card_Queue_IMU_CAM;
+
 uint8_t xSD_Card_Queue_Storage[SD_QUEUE_LEN * SD_QUEUE_SIZE];	// Storage for the static queue
 
 
@@ -97,12 +107,24 @@ uint8_t xSD_Card_Queue_Storage[SD_QUEUE_LEN * SD_QUEUE_SIZE];	// Storage for the
 void Init_SD_Card(){
 
 	// Create a Queue for the SD Card logging RTOS Task before the scheduler starts
-	xSD_Card_Queue = xQueueCreateStatic(SD_QUEUE_LEN,
+	xSD_Card_Queue_Temperature = xQueueCreateStatic(SD_QUEUE_LEN,
 										SD_QUEUE_SIZE,
 										xSD_Card_Queue_Storage,
-										&xSD_Card_Queue_Static);
+										&xSD_Card_Queue_Static0);
 
-	configASSERT(xSD_Card_Queue);	// xSD_Card_Queue_Storage was not NULL so xQueue should not be NULL.
+	xSD_Card_Queue_Wheel_Speed = xQueueCreateStatic(SD_QUEUE_LEN,
+											SD_QUEUE_SIZE,
+											xSD_Card_Queue_Storage,
+											&xSD_Card_Queue_Static1);
+
+	xSD_Card_Queue_IMU_CAM = xQueueCreateStatic(SD_QUEUE_LEN,
+											SD_QUEUE_SIZE,
+											xSD_Card_Queue_Storage,
+											&xSD_Card_Queue_Static2);
+
+	configASSERT(xSD_Card_Queue_Temperature);	// xSD_Card_Queue_Storage was not NULL so xQueue should not be NULL.
+	configASSERT(xSD_Card_Queue_Wheel_Speed);
+	configASSERT(xSD_Card_Queue_IMU_CAM);
 
 }// Init_SD_Card
 
@@ -168,7 +190,7 @@ static _Bool SD_Task_Read(int32_t btr, char * buff, FileEnum fileNum){
 
 	f_res = f_lseek(&fil[fileNum], ofs);	// point back to where we were in the file
 
-	f_res = f_puts("SD Logger - Read From SD Card\n\n", &fil[LogFile]);
+	f_res = f_puts("SD Logger - Read From SD Card\n\n", &fil[fileNum]);
 
 	return 1;
 
@@ -218,18 +240,23 @@ static _Bool SD_Task_Write(int32_t btw, char * str, FileEnum fileNum){
 // HOWEVER: Passing -1 will make the task compute the length of your error string. (If you're lazy do that)
 
 // WARNING: Must be called within a RTOS Task
-_Bool SD_Log(char * msg, int32_t bytesToWrite){
+_Bool SD_Log(char * msg, int32_t bytesToWrite, FileEnum FileToWriteTo){
 
-	BaseType_t ret;			// RTOS function returns
+	BaseType_t ret0;			// RTOS function returns
+	BaseType_t ret1;
+	BaseType_t ret2;
 	SD_Request request;		// Request Struct
 
 	request.type = Write;
 	request.buff = msg;
-	request.fileName = LogFile;
+	request.fileName = FileToWriteTo;
 	request.size = bytesToWrite;
 
-	ret = xQueueSendToBack(xSD_Card_Queue, &request, 0);	//Queue should never have more than one value in it thus wait = 0
-	if(ret != pdPASS){
+	ret0 = xQueueSendToBack(xSD_Card_Queue_Temperature, &request, 0);	//Queue should never have more than one value in it thus wait = 0
+	ret1 = xQueueSendToBack(xSD_Card_Queue_Wheel_Speed, &request, 0);
+	ret2 = xQueueSendToBack(xSD_Card_Queue_IMU_CAM, &request, 0);
+
+	if(( ret0 | ret1 | ret2 ) != pdPASS){
 		//ERROR! Queue is full
 		return 0;
 	}
@@ -240,23 +267,38 @@ _Bool SD_Log(char * msg, int32_t bytesToWrite){
 // Log a message to the SD card
 // Each message passed through this function will be passed to the SD_Card queue
 // WARNING: Use this function to call from Interrupt
-_Bool SD_Log_From_ISR(char * msg, int32_t bytesToWrite){
+_Bool SD_Log_From_ISR(char * msg, int32_t bytesToWrite, FileEnum FileToWriteTo){
 
 	// should be able to get away with static as interrupts cannot be spliced
-	BaseType_t ret, pxHigherPriorityTaskWoken;			// RTOS function returns
+	BaseType_t ret0, pxHigherPriorityTaskWoken0;			// RTOS function returns
+	BaseType_t ret1, pxHigherPriorityTaskWoken1;			// RTOS function returns
+	BaseType_t ret2, pxHigherPriorityTaskWoken2;			// RTOS function returns
+
+
 	SD_Request request;		// Request Struct
 
 
 		request.type = Write;
 		request.buff = msg;
-		request.fileName = LogFile;
+		request.fileName = FileToWriteTo;
 		request.size = bytesToWrite;
 
-	ret = xQueueSendToBackFromISR(	xSD_Card_Queue,
-									&request,
-									&pxHigherPriorityTaskWoken);
 
-	if(ret != pdPASS || pxHigherPriorityTaskWoken != pdTRUE){
+
+	ret0 = xQueueSendToBackFromISR(	xSD_Card_Queue_Temperature,
+									&request,
+									&pxHigherPriorityTaskWoken0);
+	ret1 = xQueueSendToBackFromISR(	xSD_Card_Queue_Wheel_Speed,
+										&request,
+										&pxHigherPriorityTaskWoken1);
+	ret2 = xQueueSendToBackFromISR(	xSD_Card_Queue_IMU_CAM,
+										&request,
+										&pxHigherPriorityTaskWoken2);
+
+
+
+
+	if(ret0 != pdPASS || pxHigherPriorityTaskWoken0 != pdTRUE){
 
 		//	Calling this function should trigger a context switch to SD_Card_Logger
 		// 	after the interrupt.
@@ -266,6 +308,26 @@ _Bool SD_Log_From_ISR(char * msg, int32_t bytesToWrite){
 
 		return 0;
 	}// if error occured
+	if(ret1 != pdPASS || pxHigherPriorityTaskWoken1 != pdTRUE){
+
+			//	Calling this function should trigger a context switch to SD_Card_Logger
+			// 	after the interrupt.
+			// 	^thus is pxHigherPriorityTaskWoken is not pdTRUE, that will not happen
+
+			// ret != pdPASS  means that the queue is full, which should not be the case
+
+			return 0;
+		}// if error occured
+	if(ret2 != pdPASS || pxHigherPriorityTaskWoken2 != pdTRUE){
+
+			//	Calling this function should trigger a context switch to SD_Card_Logger
+			// 	after the interrupt.
+			// 	^thus is pxHigherPriorityTaskWoken is not pdTRUE, that will not happen
+
+			// ret != pdPASS  means that the queue is full, which should not be the case
+
+			return 0;
+		}// if error occured
 
 	return 1;
 }
@@ -283,7 +345,7 @@ _Bool SD_Read(char *readBuff, int32_t bytesToRead, FileEnum file){
 	request.fileName = file;
 	request.size = bytesToRead;
 
-	ret = xQueueSendToBack(xSD_Card_Queue, &request, 0);	//Queue should never have more than one value in it thus wait = 0
+	ret = xQueueSendToBack(xSD_Card_Queue_Temperature, &request, 0);	//Queue should never have more than one value in it thus wait = 0
 	if(ret != pdPASS){
 		//ERROR! Queue is full
 		return 0;	//return
@@ -301,7 +363,7 @@ _Bool SD_Eject(){
 
 	request.type = Eject;	// Request to Eject
 
-	ret = xQueueSendToBack(xSD_Card_Queue, &request, 0);	//Queue should never have more than one value in it thus wait = 0
+	ret = xQueueSendToBack(xSD_Card_Queue_Temperature, &request, 0);	//Queue should never have more than one value in it thus wait = 0
 	if(ret != pdPASS){
 		//ERROR! Queue is full
 		return 0;	//return
@@ -315,7 +377,9 @@ _Bool SD_Eject(){
 // 	than sender Tasks which report to this task through its Queue: xSD_Card_Queue
 void xSD_Card_Gatekeeper(void* pvParameters){
 
-	static BaseType_t xStatus;					// storage for RTOS function returns
+	static BaseType_t xStatus0;					// storage for RTOS function returns
+	static BaseType_t xStatus1;
+	static BaseType_t xStatus2;
 	static SD_Request sd_req;					// request being sent to SD gatekeeper
 
 
@@ -329,12 +393,19 @@ void xSD_Card_Gatekeeper(void* pvParameters){
 	f_res = f_mkdir(LOG_DIR_NAME);		// Make the directory if it hasn't been made
 	f_res = f_chdir(LOG_DIR_NAME);		// open the logs directory
 
-	f_res = f_open(&fil[LogFile], LOG_FILE_NAME, FA_READ | FA_WRITE | FA_OPEN_APPEND);
-	f_res = f_sync(&fil[LogFile]);		// sync so we dont lose the opened file
+	f_res = f_open(&fil[Temperature_File], LOG_FILE_NAME0, FA_READ | FA_WRITE | FA_OPEN_APPEND);
+	f_res = f_sync(&fil[Temperature_File]);		// sync so we dont lose the opened file
+
+	f_res = f_open(&fil[Wheel_Speed_File], LOG_FILE_NAME1, FA_READ | FA_WRITE | FA_OPEN_APPEND);
+	f_res = f_sync(&fil[Wheel_Speed_File]);		// sync so we dont lose the opened file
+
+	f_res = f_open(&fil[IMU_CAN_FILE], LOG_FILE_NAME2, FA_READ | FA_WRITE | FA_OPEN_APPEND);
+	f_res = f_sync(&fil[IMU_CAN_FILE]);		// sync so we dont lose the opened file
 
 	for(;;){
 
-		if( uxQueueMessagesWaiting(xSD_Card_Queue) != 0 )
+		//3 separate checks for No OP so they are all independent
+		if( uxQueueMessagesWaiting(xSD_Card_Queue_Temperature) != 0 )
 		{
 			// Queue not empty when entering task!
 			// Error!
@@ -342,11 +413,29 @@ void xSD_Card_Gatekeeper(void* pvParameters){
 			__NOP();
 		}//if
 
+		if( uxQueueMessagesWaiting(xSD_Card_Queue_Wheel_Speed) != 0 )
+				{
+					// Queue not empty when entering task!
+					// Error!
+					// Trace which task beat this task's priority?
+					__NOP();
+				}//if
+
+		if( uxQueueMessagesWaiting(xSD_Card_Queue_IMU_CAM) != 0 )
+				{
+					// Queue not empty when entering task!
+					// Error!
+					// Trace which task beat this task's priority?
+					__NOP();
+				}//if
+
+
+
 		// Wait for new request to be sent to the Queue
-		xStatus = xQueueReceive(xSD_Card_Queue, &sd_req, portMAX_DELAY);	//TODO: Make this timeout and check for errors (We should be constantly logging from BMS)
+		xStatus0 = xQueueReceive(xSD_Card_Queue_Temperature, &sd_req, portMAX_DELAY);	//TODO: Make this timeout and check for errors (We should be constantly logging from BMS)
 
 		// If data received within time frame (if we decide to have a wait time)
-		if(xStatus == pdTRUE){
+		if(xStatus0 == pdTRUE){
 
 			switch (sd_req.type) {
 				case Read:
@@ -377,7 +466,74 @@ void xSD_Card_Gatekeeper(void* pvParameters){
 					break;
 			}//switch
 
-		}//if xStatus
+		}//if xStatus0
+
+		xStatus1 = xQueueReceive(xSD_Card_Queue_Wheel_Speed, &sd_req, portMAX_DELAY);
+		if(xStatus1 == pdTRUE){
+
+					switch (sd_req.type) {
+						case Read:
+							SD_Task_Read(sd_req.size, sd_req.buff, sd_req.fileName);
+							//Let the SD Sync task know that it can request a sync now during downtime
+							xTaskNotifyGive(xSD_Card_Sync_Handle);
+							break;
+						case Write:
+							SD_Task_Write(sd_req.size, sd_req.buff, sd_req.fileName);
+							//Let the SD Sync task know that it can request a sync now during downtime
+							xTaskNotifyGive(xSD_Card_Sync_Handle);
+							break;
+						case Sync:
+							//Sync all files
+							for(int i=0; i<FS_MAX_CONCURRENT_FILES; i++){
+								f_sync(&fil[i]);
+							}
+							break;
+						case Eject:
+							//Close all files
+							for(int i=0; i<FS_MAX_CONCURRENT_FILES; i++){
+								f_close(&fil[i]);
+							}
+							f_mount(0,"",0);	//unmount the fs
+							vTaskSuspend(xSD_Card_Gatekeeper_Handle);	// Suspend this task
+							break;
+						default:
+							break;
+					}//switch
+
+				}//if xStatus1
+		xStatus2 = xQueueReceive(xSD_Card_Queue_IMU_CAM, &sd_req, portMAX_DELAY);
+		if(xStatus2 == pdTRUE){
+
+					switch (sd_req.type) {
+						case Read:
+							SD_Task_Read(sd_req.size, sd_req.buff, sd_req.fileName);
+							//Let the SD Sync task know that it can request a sync now during downtime
+							xTaskNotifyGive(xSD_Card_Sync_Handle);
+							break;
+						case Write:
+							SD_Task_Write(sd_req.size, sd_req.buff, sd_req.fileName);
+							//Let the SD Sync task know that it can request a sync now during downtime
+							xTaskNotifyGive(xSD_Card_Sync_Handle);
+							break;
+						case Sync:
+							//Sync all files
+							for(int i=0; i<FS_MAX_CONCURRENT_FILES; i++){
+								f_sync(&fil[i]);
+							}
+							break;
+						case Eject:
+							//Close all files
+							for(int i=0; i<FS_MAX_CONCURRENT_FILES; i++){
+								f_close(&fil[i]);
+							}
+							f_mount(0,"",0);	//unmount the fs
+							vTaskSuspend(xSD_Card_Gatekeeper_Handle);	// Suspend this task
+							break;
+						default:
+							break;
+					}//switch
+
+				}//if xStatus2
 
 	}//for
 
@@ -403,7 +559,7 @@ void xSD_Sync(void * pvparameters){
 
 		if(ret == pdTRUE){
 
-			ret = xQueueSendToBack(xSD_Card_Queue, &syncRequest, 0);	//Queue should never have more than one value in it thus wait = 0
+			ret = xQueueSendToBack(xSD_Card_Queue_Temperature, &syncRequest, 0);	//Queue should never have more than one value in it thus wait = 0
 
 			if(ret != pdPASS){
 				//ERROR! Queue is full
@@ -467,7 +623,7 @@ void xTest_Sender_Task(void * pvParameters){
 	_Bool gotQueued;			// store return value
 	uint32_t MS_WAIT = pdMS_TO_TICKS(1000);
 	RTC_TimeTypeDef timeStruct;
-
+	FileEnum FileToSendTo;
 	char rtcTimeBuff[128];			// Buffer for a rtc time string
 
 	int i = 0;
@@ -483,7 +639,7 @@ void xTest_Sender_Task(void * pvParameters){
 
 			sprintf(rtcTimeBuff, "Time: %2d:%2d:%2.7lf	-> ", timeStruct.Hours, timeStruct.Minutes, timeStruct.Seconds+(double)1/timeStruct.SubSeconds);
 
-			gotQueued = SD_Log(rtcTimeBuff, -1);
+			gotQueued = SD_Log(rtcTimeBuff, -1,FileToSendTo);
 			i++;
 		}
 

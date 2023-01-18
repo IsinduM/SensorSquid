@@ -71,7 +71,7 @@ void readTemp_task(){
 		sprintf(tempMsg, "Temperature: %f\r\n", temperatures[0]);
 		HAL_UART_Transmit(&huart1, (uint8_t *) tempMsg, strlen(tempMsg), 10);
 
-		SD_Log(msg, -1);
+		SD_Log(msg, -1,Temperature_File);
 		memset(msg, 0, sizeof msg);
 		memset(msgTemp, 0, sizeof msgTemp);
 		vTaskDelay(pdMS_TO_TICKS(10));
